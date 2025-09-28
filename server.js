@@ -4,7 +4,13 @@ const cors = require('cors');
 const path = require('path');
 
 const app = express();
-const PORT = process.env.PORT || 3001;
+
+// ADDED: Dinamic port
+const port = process.env.PORT || 3001;
+app.listen(port, () => {
+  console.log(`Server running on port ${port}`);
+});
+
 
 // Middleware
 app.use(cors());
