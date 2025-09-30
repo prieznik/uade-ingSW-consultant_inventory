@@ -6,7 +6,7 @@ const path = require('path');
 const app = express();
 
 // ADDED: Dinamic port
-const port = process.env.PORT || 3001;
+const port = process.env.PORT || 80;
 app.listen(port, () => {
   console.log(`Server running on port ${port}`);
 });
