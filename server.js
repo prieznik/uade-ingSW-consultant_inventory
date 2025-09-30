@@ -1,156 +1,154 @@
 const express = require('express');
-const sqlite3 = require('sqlite3').verbose();
 const cors = require('cors');
 const path = require('path');
 
+// === App & server port (80 por requerimiento) ===
 const app = express();
+const PORT = process.env.PORT || 80;
 
-// ADDED: Dinamic port
-const port = process.env.PORT || 80;
-app.listen(port, () => {
-  console.log(`Server running on port ${port}`);
-});
-
-
-// Middleware
+// === Middleware ===
 app.use(cors());
 app.use(express.json());
 app.use(express.static('public'));
 
-// Initialize SQLite database
-const db = new sqlite3.Database(':memory:');
+// === DB (MySQL) ===
+const db = require('./database');
 
-// Create tables
-db.serialize(() => {
-  db.run(`CREATE TABLE IF NOT EXISTS products (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    category TEXT NOT NULL,
-    quantity INTEGER NOT NULL,
-    price REAL NOT NULL,
+// === Crear tabla si no existe + seed si está vacía ===
+const createTableSQL = `
+  CREATE TABLE IF NOT EXISTS products (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    category VARCHAR(100) NOT NULL,
+    quantity INT NOT NULL,
+    price DECIMAL(10,2) NOT NULL,
     description TEXT,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  )`);
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+  ) ENGINE=InnoDB;
+`;
 
-  // Insert sample data
-  const sampleProducts = [
-    ['Laptop Pro', 'Electronics', 15, 1299.99, 'High-performance laptop'],
-    ['Wireless Mouse', 'Electronics', 45, 29.99, 'Ergonomic wireless mouse'],
-    ['Office Chair', 'Furniture', 8, 199.99, 'Comfortable office chair'],
-    ['Coffee Beans', 'Food', 120, 12.99, 'Premium coffee beans'],
-    ['Notebook Set', 'Office Supplies', 200, 8.99, 'Pack of 3 notebooks']
-  ];
-
-  const stmt = db.prepare('INSERT INTO products (name, category, quantity, price, description) VALUES (?, ?, ?, ?, ?)');
-  sampleProducts.forEach(product => {
-    stmt.run(product);
-  });
-  stmt.finalize();
-});
-
-// API Routes
-app.get('/api/products', (req, res) => {
-  db.all('SELECT * FROM products ORDER BY created_at DESC', [], (err, rows) => {
-    if (err) {
-      res.status(500).json({ error: err.message });
+db.query(createTableSQL, (err) => {
+  if (err) {
+    console.error('Error creating products table:', err.message);
+    return;
+  }
+  // Insertar datos de ejemplo solo si la tabla está vacía
+  db.query('SELECT COUNT(*) AS cnt FROM products', (err2, rows) => {
+    if (err2) {
+      console.error('Count error:', err2.message);
       return;
     }
+    const count = rows[0]?.cnt ?? 0;
+    if (count === 0) {
+      const sampleProducts = [
+        ['Laptop Pro', 'Electronics', 15, 1299.99, 'High-performance laptop'],
+        ['Wireless Mouse', 'Electronics', 45, 29.99, 'Ergonomic wireless mouse'],
+        ['Office Chair', 'Furniture', 8, 199.99, 'Comfortable office chair'],
+        ['Coffee Beans', 'Food', 120, 12.99, 'Premium coffee beans'],
+        ['Notebook Set', 'Office Supplies', 200, 8.99, 'Pack of 3 notebooks']
+      ];
+      db.query(
+        'INSERT INTO products (name, category, quantity, price, description) VALUES ?',
+        [sampleProducts],
+        (err3) => {
+          if (err3) console.error('Seed insert error:', err3.message);
+        }
+      );
+    }
+  });
+});
+
+// === API Routes ===
+
+// Listado
+app.get('/api/products', (req, res) => {
+  db.query('SELECT * FROM products ORDER BY created_at DESC', (err, rows) => {
+    if (err) return res.status(500).json({ error: err.message });
     res.json(rows);
   });
 });
 
+// Detalle
 app.get('/api/products/:id', (req, res) => {
   const { id } = req.params;
-  db.get('SELECT * FROM products WHERE id = ?', [id], (err, row) => {
-    if (err) {
-      res.status(500).json({ error: err.message });
-      return;
+  db.query('SELECT * FROM products WHERE id = ?', [id], (err, rows) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!rows || rows.length === 0) {
+      return res.status(404).json({ error: 'Product not found' });
     }
-    if (!row) {
-      res.status(404).json({ error: 'Product not found' });
-      return;
-    }
-    res.json(row);
+    res.json(rows[0]);
   });
 });
 
+// Crear
 app.post('/api/products', (req, res) => {
   const { name, category, quantity, price, description } = req.body;
-  
+
   if (!name || !category || quantity === undefined || price === undefined) {
-    res.status(400).json({ error: 'Missing required fields' });
-    return;
+    return res.status(400).json({ error: 'Missing required fields' });
   }
 
-  db.run(
+  db.query(
     'INSERT INTO products (name, category, quantity, price, description) VALUES (?, ?, ?, ?, ?)',
-    [name, category, quantity, price, description],
-    function(err) {
-      if (err) {
-        res.status(500).json({ error: err.message });
-        return;
-      }
-      res.json({ id: this.lastID, message: 'Product created successfully' });
+    [name, category, quantity, price, description || null],
+    (err, result) => {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json({ id: result.insertId, message: 'Product created successfully' });
     }
   );
 });
 
+// Actualizar
 app.put('/api/products/:id', (req, res) => {
   const { id } = req.params;
   const { name, category, quantity, price, description } = req.body;
-  
-  db.run(
-    'UPDATE products SET name = ?, category = ?, quantity = ?, price = ?, description = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-    [name, category, quantity, price, description, id],
-    function(err) {
-      if (err) {
-        res.status(500).json({ error: err.message });
-        return;
-      }
-      if (this.changes === 0) {
-        res.status(404).json({ error: 'Product not found' });
-        return;
+
+  db.query(
+    `UPDATE products
+     SET name = ?, category = ?, quantity = ?, price = ?, description = ?
+     WHERE id = ?`,
+    [name, category, quantity, price, description || null, id],
+    (err, result) => {
+      if (err) return res.status(500).json({ error: err.message });
+      if (result.affectedRows === 0) {
+        return res.status(404).json({ error: 'Product not found' });
       }
       res.json({ message: 'Product updated successfully' });
     }
   );
 });
 
+// Eliminar
 app.delete('/api/products/:id', (req, res) => {
   const { id } = req.params;
-  
-  db.run('DELETE FROM products WHERE id = ?', [id], function(err) {
-    if (err) {
-      res.status(500).json({ error: err.message });
-      return;
-    }
-    if (this.changes === 0) {
-      res.status(404).json({ error: 'Product not found' });
-      return;
+
+  db.query('DELETE FROM products WHERE id = ?', [id], (err, result) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Product not found' });
     }
     res.json({ message: 'Product deleted successfully' });
   });
 });
 
-// Dashboard stats
+// Stats
 app.get('/api/stats', (req, res) => {
-  db.all(`
-    SELECT 
-      COUNT(*) as total_products,
-      SUM(quantity) as total_items,
-      COUNT(DISTINCT category) as categories,
-      SUM(quantity * price) as total_value
+  const sql = `
+    SELECT
+      COUNT(*) AS total_products,
+      COALESCE(SUM(quantity), 0) AS total_items,
+      COUNT(DISTINCT category) AS categories,
+      COALESCE(SUM(quantity * price), 0) AS total_value
     FROM products
-  `, [], (err, row) => {
-    if (err) {
-      res.status(500).json({ error: err.message });
-      return;
-    }
-    res.json(row[0]);
+  `;
+  db.query(sql, (err, rows) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(rows[0]);
   });
 });
 
+// === Start server ===
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
