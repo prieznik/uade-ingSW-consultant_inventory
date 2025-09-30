@@ -215,10 +215,8 @@ http://consultant-inventory-3-env.us-east-1.elasticbeanstalk.com
 
 Open it in your browser and confirm the app loads.
 
-📌 Next steps (Exercise 4)
+📌 Exercise 4
 
-Update the app to run on port 80.
+Updated the app to run on port 80.
 
-Migrate the database from SQLite → MySQL or PostgreSQL.
-
-Push the updated project to your own GitHub repository.
+Migrated the database from SQLite → MySQL or PostgreSQL.
